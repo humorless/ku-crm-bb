@@ -1,0 +1,7 @@
+{:dbtype   "postgresql"
+ :host     "localhost"
+ :dbname   "kuops_dev"
+ :user     "laurence"
+;;  :password "develop"
+ :currentSchema "dbt_develop"
+ :port     5432}
