@@ -13,17 +13,15 @@
 ;; Config
 (def conn (edn/read-string (slurp "config.edn")))    
 
-;; API here
-(defn all-students-sqlmap
-  "default value of src-table-name is pre_ops_student_insert"
-  [src-table-name]                                                                                                                    
-  {:select [:*]                                                                                                                             
-   :from [(keyword src-table-name)]})                                                                                                                       
-                                                                                                                                            
+(comment
+  (pg/execute! conn ["select * from ops_student;"]))
+
+;; DB access library functions
 (defn get-all-students [src-table-name]                                                                                                 
-  (pg/execute! conn 
-               (hsql/format
-                 (all-students-sqlmap src-table-name))))                                                                                    
+  (let [query-map {:select [:*]
+                   :from [(keyword src-table-name)]}
+        query (hsql/format query-map)]
+   (pg/execute! conn query)))
                                                                                                                                             
 (defn create-student!                                                                                                                       
   "Input argument is a list of hashmap `m`, so it denoted as `ms`.                                                                          
@@ -38,33 +36,45 @@
     (prn "the batch size is: " (count ms))                                                                                                  
     (pg/execute! conn cmd)))                                                                                                              
 
-(defn latest-seq-number [conn]
-  (let [cmd {:select [[[:nextval "ops_student_serial"]]]}]
-    (pg/execute! conn 
-                 (hsql/format cmd))))
+(defn latest-seq-number!
+  "Query the database to get next sequence number
+   The sequence number in database will increment by 1"
+  [conn]
+  (let [cmd-map {:select [[[:nextval "ops_student_serial"]]]}
+        cmd (hsql/format cmd-map)]
+    (pg/execute! conn cmd)))
 
-(defn class-id->prefix [c-id]
+;; Pure library functions
+(defn class-id->prefix
+  "from center_symbol to classroom-type"
+  [c-id]
   (cond
     (= 5 (count c-id)) [:classroom/ac "ac"]
     (> (count c-id) 2) [:classroom/franchise (subs c-id 0 2)]
     :else [:classroom/ghost "gh"]))
 
-(defn compact [record]
+(defn compact
+  "remove all the nil value inside a hashmap"
+  [record]
   (into {} (remove (comp nil? second) record)))
 
+;; Assemble functions: The functions which assemble pure functions and DB access functions.
 (defn add-columns
-  "Handle one student datum"
+  "Handle one student datum:
+   - query the sequence number inside database
+   - add serial and classroom-type columns"
   [conn src-table datum]
   (let [k (keyword src-table "center_symbol")
         center_symbol (k datum) 
         [tag prefix]  (class-id->prefix center_symbol)
-        [{:keys [nextval]}] (latest-seq-number conn)
+        [{:keys [nextval]}] (latest-seq-number! conn)
         serial (str prefix (pprint/cl-format nil "~8,'0d" (inc nextval)))
         tx* (assoc datum :student/serial serial
                    :student/classroom-type (str tag))
         tx** (compact tx*)]
     tx**))
 
+;; High level API: create-cmd, update-cmd
 (defn create-cmd
   [src-table debug?]
   (let [students (get-all-students src-table)
@@ -78,39 +88,25 @@
     (dorun
       (map #(create-student! %) data-segments))))
 
-(comment 
-  (pg/execute! conn ["select * from ops_student;"]))
-
+;; Command line arguments processing
 (def cli-options
   ;; An option with a required argument
-  [(comment
-    ["-p" "--port PORT" "Port number"
-     :default 80
-     :parse-fn #(Integer/parseInt %)
-     :validate [#(< 0 % 0x10000) "Must be a number between 0 and 65536"]])
-   ["-s" "--src-table SRC_TABLE" "The students to be inserted src table"
+  [["-s" "--src-table SRC_TABLE"
+    "Specifiy the `src-table`, if omit, using the default value."
     :default "pre_ops_student_insert"]
-   ["-h" "--help"]
-   ["-c" "--create"]
-   ["-u" "--update"]
-   ["-d" "--debug"]])
+   ["-h" "--help" "Showing usage summary"]
+   ["-c" "--create" "Inserting new records"]
+   ["-u" "--update" "Modifying existing records"]
+   ["-d" "--debug" "Printing the intermediate states"]])
 
-;;  ./bin/postgres/crud.bb.clj -h -d
-;; {:src-table "pre_ops_student_insert", :help true, :debug true}
- 
-(def input 
-  (:options (parse-opts *command-line-args* cli-options)))
-
-(defn main [args]
+(defn main [{:keys [options arguments errors summary]}]
   (cond 
-    (:create args) (create-cmd (:src-table args) (:debug args)) 
+    (:create options) (create-cmd (:src-table options) (:debug options))
 ;;  (:update args) (update-cmd (:src-table args)) 
+    (:help options) (println (str "Usage: \n"summary))
     :else (prn "no arguments recognized")))
 
-(main input)
-
-(comment 
-  (main {:src-table "pre_ops_student_insert" :create true}))
+(main (parse-opts *command-line-args* cli-options) )
 
 ;; crud.clj -d
 ;; crud.clj --create --src-table pre_ops_student_insert -d
