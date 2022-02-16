@@ -21,7 +21,7 @@ CREATE SEQUENCE ops_student_serial start XXX;
 
 create new students by the src-table `pre_ops_student_insert`
 ```
-$ ./crud.bb.clj --create --src-table pre_ops_student_insert
+$ ./crud.clj --create --src-table pre_ops_student_insert
 ```
 Note:
 We can also see the intermediate output by
