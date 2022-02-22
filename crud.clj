@@ -58,6 +58,14 @@
   [record]
   (into {} (remove (comp nil? second) record)))
 
+(defn update-set-subcmd-from-schema
+  [columns src-table dest-table]
+  (zipmap
+    (mapv keyword columns)
+    (mapv (fn [c]
+            [:coalesce (keyword src-table c) (keyword dest-table c)])
+          columns)))
+
 ;; Assemble functions: The functions which assemble pure functions and DB access functions.
 (defn add-columns
   "Handle one student datum:
@@ -74,6 +82,22 @@
         tx** (compact tx*)]
     tx**))
 
+(comment
+  (pg/execute! conn ["select column_name from information_schema.columns where table_name = ?" "modify_student"])
+ 
+  )
+
+(defn desc-table-schema
+  "get the columns of the table"
+  [table]
+  (let [query-map {:select :column_name
+                   :from [:information_schema.columns]
+                   :where [:= :table_name table]}
+        query (hsql/format query-map)
+        result (pg/execute! conn query)]
+    (mapv (fn [{:columns/keys [column_name]}]
+           column_name) result)))
+
 ;; High level API: create-cmd, update-cmd
 (defn create-cmd
   [src-table debug?]
@@ -87,6 +111,22 @@
     )
     (dorun
       (map #(create-student! %) data-segments))))
+
+;; (update-cmd "update_student" true)     
+(defn update-cmd
+  [src-table debug?]
+  (let [src (keyword src-table)
+        src-serial (keyword src-table "serial")
+        columns (desc-table-schema src-table) 
+        cmd-map {:update :ops_student
+              ;; :set {:classroom_type [:coalesce (keyword src-table "classroom_type") :ops_student.classroom_type]} 
+                 :set (update-set-subcmd-from-schema columns src-table "ops_student")
+                 :where [:= :ops_student.serial src-serial]
+                 :from [src]}
+        cmd (hsql/format cmd-map (:pretty true))]
+    (when debug?
+      (println "show update command: \n" cmd "\n\n\n"))
+    (pg/execute! conn cmd)))
 
 ;; Command line arguments processing
 (def cli-options
@@ -102,7 +142,7 @@
 (defn main [{:keys [options arguments errors summary]}]
   (cond 
     (:create options) (create-cmd (:src-table options) (:debug options))
-;;  (:update args) (update-cmd (:src-table args)) 
+    (:update options) (update-cmd (:src-table options) (:debug options)) 
     (:help options) (println (str "Usage: \n"summary))
     :else (prn "no arguments recognized")))
 
